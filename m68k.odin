@@ -1,7 +1,5 @@
 package main
 
-import "core:fmt"
-
 // Motorola 68000 CPU
 M68K :: struct {
     // Registers
@@ -12,14 +10,26 @@ M68K :: struct {
     PC:  u32,    // Program counter
 }
 
-m68k_read_byte :: proc(m: ^M68K, address: u32) -> u8 {
+M68K_Data_Size :: enum u32 {
+    Byte = 1, 
+    Word = 2, 
+    Long = 4,
+}
+
+m68k_read :: proc(m: ^M68K, address: u32, size: M68K_Data_Size) -> u32 {
+    switch size {
+    case .Byte:
+    case .Word:
+    case .Long:
+    }
+
     return 0
 }
 
-m68k_read_word :: proc(m: ^M68K, address: u32) -> u16 {
-    return 0
-}
-
-m68k_read_long :: proc(m: ^M68K, address: u32) -> u32 {
-    return 0
+m68k_write :: proc(m: ^M68K, address: u32, size: M68K_Data_Size, data: u32) {
+    switch size {
+    case .Byte:
+    case .Word:
+    case .Long:
+    }
 }

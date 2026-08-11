@@ -1,6 +1,5 @@
 package main
 
-import "core:log"
 import "core:fmt"
 
 M68K_Instruction :: struct {
@@ -8,6 +7,9 @@ M68K_Instruction :: struct {
     mask: u16,
     pattern: u16,
     mnemonic: string,
+
+    // Since instructions can have variable length depending on operands size, they are also responsible
+    // for advancing the PC.
     handler: proc(m: ^M68K, opcode: u16) -> (cycles: u64),
 }
 
@@ -104,6 +106,9 @@ M68K_Instruction_Decoding_Table := [?]M68K_Instruction{
     { mask = 0b11110000_00011000, pattern = 0b11100000_00001000, mnemonic = "LSd",          handler = m68k_not_implemented },
     { mask = 0b11110000_00011000, pattern = 0b11100000_00010000, mnemonic = "ROXd",         handler = m68k_not_implemented },
     { mask = 0b11110000_00011000, pattern = 0b11100000_00011000, mnemonic = "ROd",          handler = m68k_not_implemented },
+
+    // Catch-all case for all unclassified opcodes
+    { mask = 0b00000000_00000000, pattern = 0b00000000_00000000, mnemonic = "ILLEGAL",      handler = m68k_not_implemented },
 }
 
 M68K_Instruction_Decoding_Cache: [0x10000]^M68K_Instruction
@@ -115,17 +120,12 @@ m68k_decode_instruction_uncached :: proc(opcode: u16) -> ^M68K_Instruction {
         }
     }
 
-    return nil
+    panic(fmt.tprintf("unclassified opcode %04X\n", opcode))
 }
 
 m68k_init_instruction_decoding_cache :: proc() {
     for opcode in u16(0) ..= 0xFFFF {
-        instr := m68k_decode_instruction_uncached(opcode)
-        if instr == nil {
-            panic(fmt.tprintf("unclassified opcode %04X", opcode))
-        }
-
-        M68K_Instruction_Decoding_Cache[opcode] = instr
+        M68K_Instruction_Decoding_Cache[opcode] = m68k_decode_instruction_uncached(opcode)
     }
 }
 
@@ -133,7 +133,138 @@ m68k_decode_instruction :: proc(opcode: u16) -> ^M68K_Instruction {
     return M68K_Instruction_Decoding_Cache[opcode]
 }
 
-m68k_not_implemented :: proc(m: ^M68K, opcode: u16) -> (cycles: u64) {
-    log.warnf("opcode %04X is not implemented", opcode)
+m68k_not_implemented :: proc(m: ^M68K, opcode: u16) -> u64 {
+    panic(fmt.tprintf("opcode %04X is not implemented", opcode))
+}
+
+// Fetches data from PC and advances it.
+m68k_fetch :: proc(m: ^M68K, size: M68K_Data_Size) -> u32 {
+    data := m68k_read(m, m.PC, size)
+    m.PC += u32(size)
+    return data
+}
+
+Immediate :: distinct u32
+
+Effective_Address :: union {
+    ^u32, // For registers
+    u32,  // For bus addresses
+    Immediate,
+}
+
+// Resolves instruction effective address, fetches necessary amount of extension words according to 
+// addressing mode, and advances PC. 
+m68k_resolve_effective_address :: proc(m: ^M68K, opcode: u16, size: M68K_Data_Size) -> (Effective_Address, u64) {
+    address_with_displacement :: proc(m: ^M68K, base: u32, size: M68K_Data_Size) -> (Effective_Address, u64) {
+        // Displacement is always a 16-bit signed integer
+        displacement := i16(m68k_fetch(m, .Word))
+
+        // Sign-extend to i32 and then cast to u32 (two's complement arithmetic just works this way)
+        return base + u32(i32(displacement)), size == .Long ? 12 : 8
+    }
+
+    address_with_index :: proc(m: ^M68K, base: u32, size: M68K_Data_Size) -> (Effective_Address, u64) {
+        ea := base
+        ext := m68k_fetch(m, .Word)
+
+        index_reg_number := (ext >> 12) & 0b111
+        index := ext >> 15 == 0 ? m.D[index_reg_number] : m.A[index_reg_number]
+
+        if ext & 0b00001000_00000000 == 0 { // Use word for index instead of long
+            ea += u32(i32(i16(index))) // Trim high bytes, interpret as i16, sign-extend to i32, and add to EA as u32
+        } else {
+            ea += index
+        }
+
+        displacement := i8(ext)
+        ea += u32(i32(displacement))
+
+        return ea, size == .Long ? 14 : 10
+    }
+
+    reg := opcode & 0b111
+    
+    // All opcodes decode addressing mode this way. The complication is that not all instructions
+    // support all addressing modes, so we need to somehow filter them out per-instruction.
+    switch opcode & 0b00111000 {
+    case 0b00000000: // Data register
+        return &m.D[reg], 0
+    case 0b00001000: // Address register
+        return &m.A[reg], 0
+    case 0b00010000: // Address
+        return m.A[reg], size == .Long ? 8 : 4
+    case 0b00011000: // Address with post-increment
+        ea := m.A[reg]
+
+        if reg == 7 && size == .Byte { // A7 (aka stack pointer) is always kept to a word boundary
+            m.A[reg] += 2
+        } else {
+            m.A[reg] += u32(size)
+        }
+
+        return ea, size == .Long ? 8 : 4
+    case 0b00100000: // Address with pre-decrement
+        if reg == 7 && size == .Byte {
+            m.A[reg] -= 2
+        } else {
+            m.A[reg] -= u32(size)
+        }
+
+        return m.A[reg], size == .Long ? 10 : 6
+    case 0b00101000:
+        return address_with_displacement(m, m.A[reg], size)
+    case 0b00110000:
+        return address_with_index(m, m.A[reg], size)
+    case 0b00111000:
+        switch reg {
+        case 0b000: // Absolute short
+            // Address must be sign-extended to 32 bits
+            return u32(i32(i16(m68k_fetch(m, .Word)))), size == .Long ? 12 : 8
+        case 0b001: // Absolute long
+            return m68k_fetch(m, .Long), size == .Long ? 16 : 12
+        case 0b010:
+            return address_with_displacement(m, m.PC, size)
+        case 0b011:
+            return address_with_index(m, m.PC, size)
+        case 0b100: // Immediate
+            cycles: u64 = size == .Long ? 8 : 4
+
+            if size == .Byte {
+                return Immediate(m68k_fetch(m, .Word) & 0xFF), cycles
+            } else {
+                return Immediate(m68k_fetch(m, size)), cycles
+            }
+        case:
+            panic("unexpected register during effective address calculation")
+        }
+    case:
+        panic("unexpected mode during effective address calculation")
+    }
+}
+
+m68k_decode_size :: proc(opcode: u16) -> M68K_Data_Size {
+    // Most of the opcodes encode data size this way, but there are exceptions - 
+    // they will be handled by instructions individually.
+    switch opcode & 0b11000000 {
+    case 0b00000000:
+        return .Byte
+    case 0b01000000:
+        return .Word
+    case 0b10000000:
+        return .Long
+    case:
+        panic("unexpected data size")
+    }
+}
+
+/*
+calculate ea -> rawptr
+regardless of size:
+    read_ea(size), read_pc(size), write_ea(size, data_pc ~ data_ea)
+*/
+
+m68k_eori :: proc(m: ^M68K, opcode: u16) -> u64 {
+    size := m68k_decode_size(opcode)
+    data_imm := m68k_fetch(m, size)
     return 0
 }
