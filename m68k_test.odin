@@ -49,7 +49,7 @@ test_m86k_instruction_decoding :: proc(t: ^testing.T) {
     }
 
     for c in cases {
-        instr := m68k_decode_instruction_uncached(c.opcode)
+        _, instr := m68k_decode_instruction_uncached(c.opcode)
         
         testing.expectf(
             t, 
