@@ -21,7 +21,7 @@ M68K_Addressing_Mode :: enum u8 {
 // and be more CPU cache friendly.
 // Fields are reordered from largest to smallest to minimize the size of each entry.
 M68K_Instruction_Cache_Entry :: struct {
-    handler: proc(m: ^M68K, i: ^M68K_Instruction_Cache_Entry, opcode: u16) -> (cycles: u8),
+    handler: proc(i: ^M68K_Instruction_Cache_Entry, m: ^M68K, opcode: u16) -> (cycles: u8),
 
     // Info pre-calculated from the opcode
     size: M68K_Data_Size,
@@ -44,7 +44,7 @@ M68K_Instruction_Decoding_Table_Entry :: struct {
 
     // Since instructions can have variable length depending on operands size, they are also responsible
     // for advancing the PC.
-    handler: proc(m: ^M68K, i: ^M68K_Instruction_Cache_Entry, opcode: u16) -> (cycles: u8),
+    handler: proc(i: ^M68K_Instruction_Cache_Entry, m: ^M68K, opcode: u16) -> (cycles: u8),
 }
 
 @(private="file")
@@ -57,7 +57,7 @@ M68K_Instruction_Decoding_Table := [?]M68K_Instruction_Decoding_Table_Entry{
     { mask = 0b11111111_11111111, pattern = 0b00000000_01111100, mnemonic = "ORI to SR",    handler = m68k_not_implemented },
     { mask = 0b11111111_11111111, pattern = 0b00000010_00111100, mnemonic = "ANDI to CCR",  handler = m68k_not_implemented },
     { mask = 0b11111111_11111111, pattern = 0b00000010_01111100, mnemonic = "ANDI to SR",   handler = m68k_not_implemented },
-    { mask = 0b11111111_11111111, pattern = 0b00001010_00111100, mnemonic = "EORI to CCR",  handler = m68k_not_implemented },
+    { mask = 0b11111111_11111111, pattern = 0b00001010_00111100, mnemonic = "EORI to CCR",  handler = m68k_eori_to_ccr },
     { mask = 0b11111111_11111111, pattern = 0b00001010_01111100, mnemonic = "EORI to SR",   handler = m68k_not_implemented },
     { mask = 0b11111111_11111111, pattern = 0b01001010_11111100, mnemonic = "ILLEGAL",      handler = m68k_illegal },
     { mask = 0b11111111_11111111, pattern = 0b01001110_01110000, mnemonic = "RESET",        handler = m68k_not_implemented },
@@ -126,7 +126,7 @@ M68K_Instruction_Decoding_Table := [?]M68K_Instruction_Decoding_Table_Entry{
     { mask = 0b11110000_11000000, pattern = 0b10110000_11000000, mnemonic = "CMPA",         handler = m68k_not_implemented },
     { mask = 0b11110001_00111000, pattern = 0b10110001_00001000, mnemonic = "CMPM",         handler = m68k_not_implemented },
     { mask = 0b11110001_00000000, pattern = 0b10110000_00000000, mnemonic = "CMP",          handler = m68k_not_implemented },
-    { mask = 0b11110001_00000000, pattern = 0b10110001_00000000, mnemonic = "EOR",          handler = m68k_not_implemented },
+    { mask = 0b11110001_00000000, pattern = 0b10110001_00000000, mnemonic = "EOR",          parse_size = true, parse_addressing_mode = true, allowed_addressing_modes = Data_Alterable_Addressing_Modes, execution_timing = Execution_Timing_EOR, handler = m68k_eor },
     { mask = 0b11110001_11000000, pattern = 0b11000000_11000000, mnemonic = "MULU",         handler = m68k_not_implemented },
     { mask = 0b11110001_11000000, pattern = 0b11000001_11000000, mnemonic = "MULS",         handler = m68k_not_implemented },
     { mask = 0b11110001_11110000, pattern = 0b11000001_00000000, mnemonic = "ABCD",         handler = m68k_not_implemented },
@@ -186,6 +186,39 @@ Execution_Timing_EORI_ORI_ANDI_SUBI_ADDI :: #sparse [M68K_Data_Size][M68K_Addres
         .Address_With_Index = 34,
         .Absolute_Short = 32,
         .Absolute_Long = 36,
+    },
+}
+
+Execution_Timing_EOR :: #sparse [M68K_Data_Size][M68K_Addressing_Mode]u8{
+    .Byte = #partial {
+        .Data_Register = 4,
+        .Address = 12,
+        .Address_With_Postincrement = 12,
+        .Address_With_Predecrement = 14,
+        .Address_With_Displacement = 16,
+        .Address_With_Index = 18,
+        .Absolute_Short = 16,
+        .Absolute_Long = 20,
+    },
+    .Word = #partial {
+        .Data_Register = 4,
+        .Address = 12,
+        .Address_With_Postincrement = 12,
+        .Address_With_Predecrement = 14,
+        .Address_With_Displacement = 16,
+        .Address_With_Index = 18,
+        .Absolute_Short = 16,
+        .Absolute_Long = 20,
+    },
+    .Long = #partial {
+        .Data_Register = 8,
+        .Address = 20,
+        .Address_With_Postincrement = 20,
+        .Address_With_Predecrement = 22,
+        .Address_With_Displacement = 24,
+        .Address_With_Index = 26,
+        .Absolute_Short = 24,
+        .Absolute_Long = 28,
     },
 }
 
@@ -297,6 +330,6 @@ m68k_decode_size :: proc(opcode: u16) -> (size: M68K_Data_Size, ok: bool) {
     }
 }
 
-m68k_not_implemented :: proc(m: ^M68K, i: ^M68K_Instruction_Cache_Entry, opcode: u16) -> u8 {
+m68k_not_implemented :: proc(i: ^M68K_Instruction_Cache_Entry, m: ^M68K, opcode: u16) -> u8 {
     panic(fmt.tprintf("opcode %04X is not implemented", opcode))
 }

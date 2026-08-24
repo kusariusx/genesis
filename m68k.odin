@@ -1,5 +1,7 @@
 package main
 
+import "base:runtime"
+
 // Motorola 68000 CPU
 M68K :: struct {
     // Registers
@@ -31,7 +33,7 @@ M68K_Effective_Address :: union #no_nil {
     M68K_Immediate,
 }
 
-@(rodata, private="file")
+@(rodata)
 Data_Mask := #sparse [M68K_Data_Size]u32 {
     .Byte = 0xFF,
     .Word = 0xFFFF,
@@ -63,21 +65,68 @@ ea_write :: proc(m: ^M68K, ea: M68K_Effective_Address, size: M68K_Data_Size, val
     }
 }
 
-m68k_read :: proc(m: ^M68K, address: u32, size: M68K_Data_Size) -> u32 {
-    switch size {
-    case .Byte:
-    case .Word:
-    case .Long:
+when ODIN_TEST {
+    Testing_Bus: map[u32]u8
+
+    @(init)
+    init_testing_bus :: proc "contextless" () {
+        context = runtime.default_context()
+        Testing_Bus = make(map[u32]u8)
     }
 
-    return 0
-}
+    @(fini)
+    fini_testing_bus :: proc "contextless" () {
+        context = runtime.default_context()
+        delete(Testing_Bus)
+    }
 
-m68k_write :: proc(m: ^M68K, address: u32, size: M68K_Data_Size, data: u32) {
-    switch size {
-    case .Byte:
-    case .Word:
-    case .Long:
+    m68k_read :: proc(m: ^M68K, address: u32, size: M68K_Data_Size) -> (result: u32) {
+        switch size {
+        case .Byte:
+            return u32(Testing_Bus[address])
+        case .Word:
+            return (u32(Testing_Bus[address]) << 8) | u32(Testing_Bus[address + 1])
+        case .Long:
+            return (u32(Testing_Bus[address]) << 24) | 
+                (u32(Testing_Bus[address + 1]) << 16) | 
+                (u32(Testing_Bus[address + 2]) << 8) |
+                u32(Testing_Bus[address + 3])
+        }
+
+        return 0
+    }
+
+    m68k_write :: proc(m: ^M68K, address: u32, size: M68K_Data_Size, data: u32) {    
+        switch size {
+        case .Byte:
+            Testing_Bus[address] = u8(data)
+        case .Word:
+            Testing_Bus[address] = u8(data >> 8)
+            Testing_Bus[address + 1] = u8(data)
+        case .Long:
+            Testing_Bus[address] = u8(data >> 24)
+            Testing_Bus[address + 1] = u8(data >> 16)
+            Testing_Bus[address + 2] = u8(data >> 8)
+            Testing_Bus[address + 3] = u8(data)
+        }
+    }
+} else {
+    m68k_read :: proc(m: ^M68K, address: u32, size: M68K_Data_Size) -> u32 {
+        switch size {
+        case .Byte:
+        case .Word:
+        case .Long:
+        }
+
+        return 0
+    }
+
+    m68k_write :: proc(m: ^M68K, address: u32, size: M68K_Data_Size, data: u32) {
+        switch size {
+        case .Byte:
+        case .Word:
+        case .Long:
+        }
     }
 }
 
