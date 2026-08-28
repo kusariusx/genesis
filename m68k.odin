@@ -16,12 +16,18 @@ M68K :: struct {
         Z: u8 | 1, // Zero
         N: u8 | 1, // Negative
         X: u8 | 1, // Extend
+        _: u8 | 3, // Padding
+        I: u8 | 3, // Interrupt Mask
+        _: u8 | 2, // Padding
+        S: u8 | 1, // Supervisor State
+        _: u8 | 1, // Padding
+        T: u8 | 1, // Trace Mode
     },
 }
 
 M68K_Data_Size :: enum u32 {
-    Byte = 1, 
-    Word = 2, 
+    Byte = 1,
+    Word = 2,
     Long = 4,
 }
 
@@ -87,8 +93,8 @@ when ODIN_TEST {
         case .Word:
             return (u32(Testing_Bus[address]) << 8) | u32(Testing_Bus[address + 1])
         case .Long:
-            return (u32(Testing_Bus[address]) << 24) | 
-                (u32(Testing_Bus[address + 1]) << 16) | 
+            return (u32(Testing_Bus[address]) << 24) |
+                (u32(Testing_Bus[address + 1]) << 16) |
                 (u32(Testing_Bus[address + 2]) << 8) |
                 u32(Testing_Bus[address + 3])
         }
@@ -96,7 +102,7 @@ when ODIN_TEST {
         return 0
     }
 
-    m68k_write :: proc(m: ^M68K, address: u32, size: M68K_Data_Size, data: u32) {    
+    m68k_write :: proc(m: ^M68K, address: u32, size: M68K_Data_Size, data: u32) {
         switch size {
         case .Byte:
             Testing_Bus[address] = u8(data)
