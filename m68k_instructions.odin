@@ -1,5 +1,13 @@
 package main
 
+// Resolves an address register, taking 2 stack pointers banking into account.
+// A7 refers to either USP or SSP, depending on the S flag.
+m68k_resolve_address_register :: proc(m: ^M68K, reg: u16) -> ^u32 {
+	// When the register number is 7 AND supervisor mode is active, add 1 to the register number to actually
+	// return A8, which holds SSP. This is a branchless way to implement banking for 2 stack pointers.
+	return &m.A[reg + u16(reg == 7) * u16(m.SR.S)]
+}
+
 // Resolves instruction effective address, fetches necessary amount of extension words according to 
 // addressing mode, and advances PC. 
 m68k_resolve_effective_address :: proc(m: ^M68K, size: M68K_Data_Size, addressing_mode: M68K_Addressing_Mode, reg: u16) -> M68K_Effective_Address {
@@ -36,7 +44,7 @@ m68k_resolve_effective_address :: proc(m: ^M68K, size: M68K_Data_Size, addressin
     case .Data_Register:
         ea = &m.D[reg]
     case .Address_Register:
-        ea = &m.A[reg]
+        ea = m68k_resolve_address_register(m, reg)
     case .Address:
         ea = m.A[reg]
     case .Address_With_Postincrement:

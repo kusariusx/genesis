@@ -151,7 +151,6 @@ test_m68k_json :: proc(t: ^testing.T) {
                 PC = c.initial.pc - 4,
 
                 SR = auto_cast c.initial.sr,
-                SSP = c.initial.ssp,
             }
 
             m.D = { 
@@ -161,7 +160,8 @@ test_m68k_json :: proc(t: ^testing.T) {
 
             m.A = {
                 c.initial.a0, c.initial.a1, c.initial.a2, c.initial.a3,
-                c.initial.a4, c.initial.a5, c.initial.a6, c.initial.usp
+                c.initial.a4, c.initial.a5, c.initial.a6, c.initial.usp,
+                c.initial.ssp,
             }
 
             for el in c.initial.ram {
@@ -192,9 +192,9 @@ test_m68k_json :: proc(t: ^testing.T) {
             expect_value(t, &is_success, m.A[6], c.final.a6)
 
             expect_value(t, &is_success, m.A[7], c.final.usp)
+            expect_value(t, &is_success, m.A[8], c.final.ssp)
             expect_value(t, &is_success, m.PC, c.final.pc - 4) // Decrement by 4 to account for lack of pre-fetch queue
             expect_value(t, &is_success, u16(m.SR), c.final.sr)
-            expect_value(t, &is_success, m.SSP, c.final.ssp)
 
             expect_value(t, &is_success, cycles, c.length)
 

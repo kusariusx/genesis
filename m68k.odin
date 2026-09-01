@@ -6,8 +6,7 @@ import "base:runtime"
 M68K :: struct {
     // Registers
     D:   [8]u32, // Data registers
-    A:   [8]u32, // Address registers (A7 is the USP - user stack pointer)
-    SSP: u32,    // Supervisor Stack Pointer
+    A:   [9]u32, // Address registers (A7 is the USP - user stack pointer, and A8 is SSP - supervisor stack pointer)
     PC:  u32,    // Program counter
 
     SR: bit_field u16 { // Status register
@@ -23,6 +22,29 @@ M68K :: struct {
         _: u8 | 1, // Padding
         T: u8 | 1, // Trace Mode
     },
+
+    halted: bool,
+}
+
+M68K_Exception_Type :: enum {
+	None,
+	
+	// Group 0
+	Reset,
+	Address_Error,
+	Bus_Error,
+
+	// Group 1
+	Trace,
+	Interrupt,
+	Illegal_Instruction,
+	Privilege_Violation,
+
+	// Group 2
+	TRAP,
+	TRAPV,
+	CHK,
+	Zero_Divide,
 }
 
 M68K_Data_Size :: enum u32 {
@@ -69,6 +91,15 @@ ea_write :: proc(m: ^M68K, ea: M68K_Effective_Address, size: M68K_Data_Size, val
     case M68K_Immediate:
         // Writing to immediate value?
     }
+}
+
+m68k_handle_exception :: proc(m: ^M68K, type: M68K_Exception_Type) -> u8 {
+	#partial switch type {
+	case .Address_Error, .Bus_Error:
+		return 0
+	case:
+		return 0
+	}
 }
 
 when ODIN_TEST {
@@ -147,4 +178,18 @@ m68k_fetch :: proc(m: ^M68K, size: M68K_Data_Size) -> u32 {
     data := m68k_read(m, m.PC, size)
     m.PC += u32(size)
     return data
+}
+
+// Pushes a value onto a stack (user or supervisor depending on current mode)
+m68k_push :: proc(m: ^M68K, value: u16) {
+	sp := m68k_resolve_address_register(m, 7)
+	sp^ -= 2 // Pre-decrement, align to word
+	m68k_write(m, sp^, .Word, u32(value))
+}
+
+m68k_pop :: proc(m: ^M68K) -> u16 {
+	sp := m68k_resolve_address_register(m, 7)
+	val := m68k_read(m, sp^, .Word)
+	sp^ += 2 // Post-increment, align to word
+	return u16(val)
 }
