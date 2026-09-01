@@ -26,25 +26,47 @@ M68K :: struct {
     halted: bool,
 }
 
-M68K_Exception_Type :: enum {
-	None,
-	
+// Using enum as a group of named constants. Holding already shifted vectors to avoid doing it at runtime.
+M68K_Exception_Vector :: enum u32 {
 	// Group 0
-	Reset,
-	Address_Error,
-	Bus_Error,
+	Reset, // Vectors 0 (initial SSP) and 1 (initial PC)
+	Bus_Error = 2 << 2,
+	Address_Error = 3 << 2,
 
 	// Group 1
-	Trace,
+	Trace = 9 << 2,
 	Interrupt,
-	Illegal_Instruction,
-	Privilege_Violation,
+	Illegal_Instruction = 4 << 2,
+	Privilege_Violation = 8 << 2,
 
 	// Group 2
 	TRAP,
-	TRAPV,
-	CHK,
-	Zero_Divide,
+	TRAPV = 7 << 2,
+	CHK = 6 << 2,
+	Zero_Divide = 5 << 2,
+}
+
+// Common fields for address error and bus error exceptions
+M68K_Address_Or_Bus_Error_Exception :: struct {
+	opcode: u16,
+	address: u32,
+	is_read: bool, // Is exception caused by read or write
+	is_instruction: bool, // Is exception occured during instruction processing
+	function_code: u16,
+}
+
+// Keeping 2 separate structs to make intent clearer
+M68K_Address_Error_Exception :: struct {
+	using _: M68K_Address_Or_Bus_Error_Exception,
+}
+
+M68K_Bus_Error_Exception :: struct {
+	using _: M68K_Address_Or_Bus_Error_Exception,
+}
+
+M68K_Exception :: union {
+	M68K_Address_Error_Exception,
+	M68K_Bus_Error_Exception,
 }
 
 M68K_Data_Size :: enum u32 {
@@ -93,10 +115,33 @@ ea_write :: proc(m: ^M68K, ea: M68K_Effective_Address, size: M68K_Data_Size, val
     }
 }
 
-m68k_handle_exception :: proc(m: ^M68K, type: M68K_Exception_Type) -> u8 {
-	#partial switch type {
-	case .Address_Error, .Bus_Error:
-		return 0
+m68k_handle_exception :: proc(m: ^M68K, ex: M68K_Exception) -> u8 {
+	handle_address_or_bus_error_exception :: proc(m: ^M68K, vector: M68K_Exception_Vector, e: M68K_Address_Or_Bus_Error_Exception) {
+		// The status register is copied, the supervisor state is entered, and the trace state is turned off
+		sr_copy := m.SR
+		m.SR.S = 1
+		m.SR.T = 0
+
+		// Push stack frame
+		m68k_push(m, u16(m.PC & 0xFFFF))
+		m68k_push(m, u16(m.PC >> 16))
+		m68k_push(m, u16(sr_copy))
+		m68k_push(m, e.opcode)
+		m68k_push(m, u16(e.address & 0xFFFF))
+		m68k_push(m, u16(e.address >> 16))
+		m68k_push(m, (u16(e.is_read) << 4) | (u16(!e.is_instruction) << 3) | (e.function_code & 0b111))
+
+		// Fetch vector
+		m.PC = m68k_read(m, u32(vector), .Long)
+	}
+	
+	#partial switch e in ex {
+	case M68K_Address_Error_Exception:
+		handle_address_or_bus_error_exception(m, .Address_Error, e)
+		return 50
+	case M68K_Bus_Error_Exception:
+		handle_address_or_bus_error_exception(m, .Bus_Error, e)
+		return 50
 	case:
 		return 0
 	}
